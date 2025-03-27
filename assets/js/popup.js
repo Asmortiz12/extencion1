@@ -197,112 +197,66 @@ if (connectApiBtn) {
       console.log('URL de la solicitud:', baseUrl);
       console.log('Token usado:', appState.apiToken);
       
-      // Probar con diferentes configuraciones de autenticación
-      const authConfigurations = [
-        // Token sin prefijo (solo el token)
-        { type: 'token-only', header: 'Authorization' },
-        // Bearer token estándar
-        { type: 'Bearer', header: 'Authorization' },
-        // Token personalizado
-        { type: 'token-only', header: 'Token' },
-        // API Key
-        { type: 'api-key', header: 'X-API-Key' },
-        // Sin autenticación
-        { type: 'none' },
-        // Personalizado - token como parámetro de URL
-        { type: 'url-param', param: 'token' },
-        // Personalizado - token como parámetro de URL alternativo
-        { type: 'url-param', param: 'api_key' }
-      ];
+      // Usar solo el método de autenticación seleccionado
+      const authType = appState.authType || 'token-only';
+      const authHeader = appState.authHeader || 'Authorization';
       
-      let success = false;
+      let requestUrl = baseUrl;
+      let headers = {};
+      let options = {
+        method: 'GET',
+        credentials: 'include' // Incluir cookies
+      };
       
-      for (const config of authConfigurations) {
-        try {
-          console.log(`Intentando con configuración: ${JSON.stringify(config)}`);
-          
-          let requestUrl = baseUrl;
-          let headers = {};
-          let options = {
-            method: 'GET',
-            credentials: 'include' // Incluir cookies
-          };
-          
-          if (config.type === 'url-param') {
-            // Agregar token como parámetro de URL
-            const separator = baseUrl.includes('?') ? '&' : '?';
-            requestUrl = `${baseUrl}${separator}${config.param}=${appState.apiToken}`;
-            headers = {
-              'Content-Type': 'application/json',
-              'Accept': '*/*'
-            };
-          } else {
-            // Usar encabezados de autenticación
-            headers = createAuthHeaders(appState.apiToken, config.type, config.header);
-          }
-          
-          options.headers = headers;
-          
-          console.log('Realizando solicitud con opciones:', {
-            url: requestUrl,
-            headers: headers
-          });
-          
-          const response = await fetch(requestUrl, options);
-          
-          console.log(`Respuesta para configuración ${JSON.stringify(config)}:`, {
-            status: response.status,
-            statusText: response.statusText
-          });
-          
-          if (response.ok) {
-            console.log(`Éxito con configuración: ${JSON.stringify(config)}`);
-            
-            // Guardar la configuración exitosa
-            if (config.type === 'url-param') {
-              appState.authType = 'url-param';
-              appState.authParam = config.param;
-            } else {
-              appState.authType = config.type;
-              appState.authHeader = config.header || 'Authorization';
-            }
-            
-            saveState();
-            
-            const data = await response.json();
-            console.log('Respuesta de la API:', data);
-            
-            // Procesar los datos
-            processApiResponse(data);
-            success = true;
-            break;
-          }
-        } catch (configError) {
-          console.error(`Error al intentar con configuración ${JSON.stringify(config)}:`, configError);
-        }
+      if (authType === 'url-param') {
+        // Agregar token como parámetro de URL
+        const param = appState.authParam || 'token';
+        const separator = baseUrl.includes('?') ? '&' : '?';
+        requestUrl = `${baseUrl}${separator}${param}=${appState.apiToken}`;
+        headers = {
+          'Content-Type': 'application/json',
+          'Accept': '*/*'
+        };
+      } else {
+        // Usar encabezados de autenticación
+        headers = createAuthHeaders(appState.apiToken, authType, authHeader);
       }
       
-      if (!success) {
-        console.log('No se pudo conectar a la API');
+      options.headers = headers;
+      
+      console.log('Realizando solicitud con opciones:', {
+        url: requestUrl,
+        headers: headers
+      });
+      
+      const response = await fetch(requestUrl, options);
+      
+      console.log('Respuesta:', {
+        status: response.status,
+        statusText: response.statusText
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        console.log('Respuesta de la API:', data);
         
+        // Procesar los datos
+        processApiResponse(data);
+      } else {
+        // Manejar error
         if (connectionStatus) {
-          connectionStatus.innerHTML = '<p class="error">No se pudo conectar a la API. Verifique la URL y el token.</p>';
-        }
-        
-        // Mostrar mensaje de error
-        showNotification('Error de conexión: No se pudo acceder a la API. Verifique la URL, el token y el tipo de autenticación.', 'error');
-        
-        // Sugerir probar diferentes métodos de autenticación
-        const tryAuthBtn = document.createElement('button');
-        tryAuthBtn.className = 'primary-button';
-        tryAuthBtn.textContent = 'Probar diferentes métodos de autenticación';
-        tryAuthBtn.addEventListener('click', () => {
-          document.getElementById('testAllAuthBtn')?.click();
-        });
-        
-        if (connectionStatus) {
+          connectionStatus.innerHTML = `<p class="error">Error de conexión: ${response.status} ${response.statusText}</p>`;
+          
+          // Agregar botón para probar todos los métodos
+          const tryAllBtn = document.createElement('button');
+          tryAllBtn.className = 'primary-button';
+          tryAllBtn.textContent = 'Probar todos los métodos de autenticación';
+          tryAllBtn.addEventListener('click', () => {
+            document.getElementById('testAllAuthBtn')?.click();
+          });
+          
           connectionStatus.appendChild(document.createElement('br'));
-          connectionStatus.appendChild(tryAuthBtn);
+          connectionStatus.appendChild(tryAllBtn);
         }
       }
     } catch (error) {
