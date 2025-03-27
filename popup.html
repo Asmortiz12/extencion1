@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>API Explorer</title>
+  <link rel="stylesheet" href="assets/css/popup.css">
+</head>
+<body>
+  <div class="container">
+    <h2>API Explorer</h2>
+    
+    <!-- Paso 1: Configurar URL de la API -->
+    <div id="step1" class="step">
+      <div class="step-title">Paso 1: Configurar URL de la API</div>
+      <input type="text" id="apiUrl" placeholder="Ingresa la URL base de la API (ej: https://api.ejemplo.com)">
+      <p id="apiUrlError" class="error hidden">Por favor ingresa una URL válida</p>
+      <button id="nextToToken">Siguiente</button>
+    </div>
+    
+    <!-- Paso 2: Configurar Token -->
+    <div id="step2" class="step hidden">
+      <div class="step-title">Paso 2: Configurar Token de Acceso</div>
+      <input type="text" id="apiToken" placeholder="Ingresa tu token de acceso">
+      <p id="tokenError" class="error hidden">Por favor ingresa un token válido</p>
+      <button id="connectApi">Conectar</button>
+      <button id="backToUrl" class="back-button">Volver</button>
+    </div>
+    
+    <!-- Paso 3: Explorar Recursos -->
+    <div id="step3" class="step hidden">
+      <div class="step-title">Paso 3: Explorar Recursos</div>
+      <div id="connectionStatus"></div>
+      <div id="resourcesContainer" class="hidden">
+        <p>Selecciona un recurso para ver sus datos:</p>
+        <div id="resourceList" class="resource-list"></div>
+      </div>
+      <button id="backToToken" class="back-button">Volver</button>
+    </div>
+    
+    <!-- Paso 4: Ver Datos del Recurso -->
+    <div id="step4" class="step hidden">
+      <div class="step-title">Datos del Recurso: <span id="currentResource"></span></div>
+      <div id="resourceData" class="resource-data">
+        <p>Cargando datos...</p>
+      </div>
+      <button id="backToResources" class="back-button">Volver a la lista de recursos</button>
+    </div>
+  </div>
+  
+  <script src="assets/js/popup.js"></script>
+</body>
+</html>

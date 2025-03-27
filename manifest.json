@@ -1,0 +1,26 @@
+{
+    "manifest_version": 3,
+    "name": "FacturaScripts",
+    "version": "1.0",
+    "description": "FacturaScripts",
+    "icons": {
+        "128": "assets/images/icon.png"
+    },
+    "action": {
+        "default_title": "FacturaScripts",
+        "default_popup": "popup.html"
+    },
+    "permissions": [        
+        "tabs",
+        "activeTab"
+    ],
+    "host_permissions": [
+        "http://*/*",
+        "https://*/*"
+    ],
+    "background": {
+        "service_worker": "assets/js/background.js"
+    }
+
+
+}
