@@ -1,1266 +1,863 @@
-// Elementos del DOM
-const step1 = document.getElementById('step1');
-const step2 = document.getElementById('step2');
-const step3 = document.getElementById('step3');
-const step4 = document.getElementById('step4');
+let apiConnection;
+let apiUrlInput, apiTokenInput; // Declarar aquí
+let apiUrlError, tokenError, step1, step2, step3, step4, connectionStatus, resourceList, resourcesContainer, currentResource, resourceData;
 
-const apiUrlInput = document.getElementById('apiUrl');
-const apiUrlError = document.getElementById('apiUrlError');
-const nextToTokenBtn = document.getElementById('nextToToken');
+document.addEventListener("DOMContentLoaded", () => {
+    apiConnection = new ApiConnection();
 
-const apiTokenInput = document.getElementById('apiToken');
-const tokenError = document.getElementById('tokenError');
-const connectApiBtn = document.getElementById('connectApi');
-const backToUrlBtn = document.getElementById('backToUrl');
+    // Inicializar las referencias a los elementos del DOM
+    apiUrlInput = document.getElementById("apiUrl");
+    apiTokenInput = document.getElementById("apiToken");
+    apiUrlError = document.getElementById("apiUrlError");
+    tokenError = document.getElementById("tokenError");
+    step1 = document.getElementById("step1");
+    step2 = document.getElementById("step2");
+    step3 = document.getElementById("step3");
+    step4 = document.getElementById("step4");
+    connectionStatus = document.getElementById("connectionStatus");
+    resourceList = document.getElementById("resourceList");
+    resourcesContainer = document.getElementById("resourcesContainer");
+    currentResource = document.getElementById("currentResource");
+    resourceData = document.getElementById("resourceData");
 
-const connectionStatus = document.getElementById('connectionStatus');
-const resourcesContainer = document.getElementById('resourcesContainer');
-const resourceList = document.getElementById('resourceList');
-const backToTokenBtn = document.getElementById('backToToken');
+    // Configurar eventos directamente usando los IDs
+    document.getElementById("nextToToken").addEventListener("click", () => goToTokenStep(apiUrlInput, apiUrlError));
+    document.getElementById("connectApi").addEventListener("click", () => connectToApi(apiTokenInput, tokenError));
+    document.getElementById("backToUrl").addEventListener("click", goToUrlStep);
+    document.getElementById("backToToken").addEventListener("click", () => goToTokenStep(apiUrlInput, apiUrlError));
+    document.getElementById("backToResources").addEventListener("click", goToResourcesStep);
 
-const currentResourceSpan = document.getElementById('currentResource');
-const resourceData = document.getElementById('resourceData');
-const backToResourcesBtn = document.getElementById('backToResources');
+    // Cargar configuración guardada
+    loadSavedConfig(apiUrlInput, apiTokenInput);
+});
 
-// Estado de la aplicación
-let appState = {
-  apiUrl: '',
-  apiToken: '',
-  authType: 'token-only', // Cambiado a token sin prefijo por defecto
-  authHeader: 'Authorization',
-  resources: [],
-  currentResource: null,
-  rawData: null
-};
-
-// Cargar estado desde localStorage
-function loadState() {
+/**
+ * Función para cargar configuración guardada
+ * @param {HTMLInputElement} urlInput - Input de URL
+ * @param {HTMLInputElement} tokenInput - Input de token
+ */
+async function loadSavedConfig(urlInput, tokenInput) {
   try {
-    const savedState = localStorage.getItem('apiExplorerState');
-    if (savedState) {
-      appState = JSON.parse(savedState);
-      
-      // Rellenar campos con datos guardados
-      if (apiUrlInput) apiUrlInput.value = appState.apiUrl || '';
-      if (apiTokenInput) apiTokenInput.value = appState.apiToken || '';
-      
-      // Si tenemos URL y token, podemos ir directamente a la lista de recursos
-      if (appState.apiUrl && appState.apiToken && appState.resources && appState.resources.length > 0) {
-        showStep(3);
-        displayResources(appState.resources);
-        if (connectionStatus) connectionStatus.innerHTML = '<p class="success">Conectado correctamente</p>';
-        if (resourcesContainer) resourcesContainer.classList.remove('hidden');
-      }
+    const hasConfig = await apiConnection.loadConfig();
+    if (hasConfig) {
+      urlInput.value = apiConnection.baseUrl;
+      tokenInput.value = apiConnection.token;
     }
   } catch (error) {
-    console.error('Error al cargar desde localStorage:', error);
+    console.error("Error al cargar la configuración:", error);
   }
 }
 
-// Guardar estado en localStorage
-function saveState() {
+/**
+ * Función para ir al paso de token
+ * @param {HTMLInputElement} urlInput - Input de URL
+ * @param {HTMLElement} urlError - Elemento para mostrar errores
+ */
+function goToTokenStep(urlInput, urlError) {
+  const isValidUrl = apiConnection.setBaseUrl(urlInput.value);
+
+  if (!isValidUrl) {
+    urlError.classList.remove("hidden");
+    urlError.textContent = "Por favor ingresa una URL válida";
+    return;
+  }
+
+  apiUrlError.classList.add("hidden");
+  step1.classList.add("hidden");
+  step2.classList.remove("hidden");
+}
+
+/**
+ * Función para volver al paso de URL
+ */
+function goToUrlStep() {
+  step2.classList.add("hidden");
+  step1.classList.remove("hidden");
+}
+
+/**
+ * Función para volver al paso de recursos
+ */
+function goToResourcesStep() {
+  step4.classList.add("hidden");
+  step3.classList.remove("hidden");
+}
+
+/**
+ * Función para conectar a la API
+ * @param {HTMLInputElement} tokenInput - Input de token
+ * @param {HTMLElement} tokenErrorElement - Elemento para mostrar errores
+ */
+async function connectToApi(tokenInput, tokenErrorElement) {
+  const isValidToken = apiConnection.setToken(tokenInput.value);
+
+  if (!isValidToken) {
+    tokenErrorElement.classList.remove("hidden");
+    tokenErrorElement.textContent = "Por favor ingresa un token válido";
+    return;
+  }
+
+  // Configurar el formato del token (sin Bearer)
+  apiConnection.setTokenFormat(false);
+
+  tokenErrorElement.classList.add("hidden");
+  connectionStatus.innerHTML = "<p>Conectando a la API...</p>";
+  step2.classList.add("hidden");
+  step3.classList.remove("hidden");
+
+  // Conectar directamente a la API
+  attemptConnection();
+}
+
+/**
+ * Función para intentar la conexión
+ */
+async function attemptConnection() {
+  connectionStatus.innerHTML =
+    "<p>Conectando a la API con el token en el encabezado personalizado...</p>";
+
   try {
-    localStorage.setItem('apiExplorerState', JSON.stringify(appState));
-  } catch (error) {
-    console.error('Error al guardar en localStorage:', error);
-  }
-}
+    const result = await apiConnection.connect();
 
-// Inicializar la aplicación
-document.addEventListener('DOMContentLoaded', loadState);
-
-// Validar URL
-function isValidUrl(url) {
-  try {
-    new URL(url);
-    return true;
-  } catch (e) {
-    // Para URLs locales como http://localhost, permitirlas
-    if (url.startsWith('http://localhost') || url.startsWith('https://localhost')) {
-      return true;
-    }
-    return false;
-  }
-}
-
-// Mostrar paso específico
-function showStep(stepNumber) {
-  if (step1) step1.classList.add('hidden');
-  if (step2) step2.classList.add('hidden');
-  if (step3) step3.classList.add('hidden');
-  if (step4) step4.classList.add('hidden');
-  
-  switch(stepNumber) {
-    case 1:
-      if (step1) step1.classList.remove('hidden');
-      break;
-    case 2:
-      if (step2) step2.classList.remove('hidden');
-      break;
-    case 3:
-      if (step3) step3.classList.remove('hidden');
-      break;
-    case 4:
-      if (step4) step4.classList.remove('hidden');
-      break;
-  }
-}
-
-// Paso 1: Validar URL y pasar al token
-if (nextToTokenBtn) {
-  nextToTokenBtn.addEventListener('click', () => {
-    const url = apiUrlInput.value.trim();
-    
-    if (!url || !isValidUrl(url)) {
-      if (apiUrlError) apiUrlError.classList.remove('hidden');
-      return;
-    }
-    
-    if (apiUrlError) apiUrlError.classList.add('hidden');
-    appState.apiUrl = url;
-    saveState();
-    showStep(2);
-  });
-}
-
-// Volver de token a URL
-if (backToUrlBtn) {
-  backToUrlBtn.addEventListener('click', () => {
-    showStep(1);
-  });
-}
-
-// Función para crear los encabezados de autenticación
-function createAuthHeaders(token, authType = 'token-only', headerName = 'Authorization') {
-  const headers = {
-    'Content-Type': 'application/json',
-    'Accept': '*/*'
-  };
-  
-  // Diferentes tipos de autenticación
-  switch (authType.toLowerCase()) {
-    case 'bearer':
-      headers[headerName] = `Bearer ${token}`;
-      break;
-    case 'token-only': // Token sin prefijo
-      headers[headerName] = token;
-      break;
-    case 'basic':
-      headers[headerName] = `Basic ${btoa(token)}`;
-      break;
-    case 'api-key':
-      headers['X-API-Key'] = token;
-      break;
-    case 'token':
-      headers[headerName] = `Token ${token}`;
-      break;
-    case 'custom':
-      const [customHeaderName, customHeaderValue] = token.split(':');
-      if (customHeaderName && customHeaderValue) {
-        headers[customHeaderName.trim()] = customHeaderValue.trim();
-      }
-      break;
-    case 'none':
-      // No agregar encabezado de autenticación
-      break;
-    default:
-      headers[headerName] = token; // Por defecto, usar token sin prefijo
-  }
-  
-  return headers;
-}
-
-// Paso 2: Conectar con la API usando el token
-if (connectApiBtn) {
-  connectApiBtn.addEventListener('click', async () => {
-    const token = apiTokenInput.value.trim();
-    
-    if (!token) {
-      if (tokenError) tokenError.classList.remove('hidden');
-      return;
-    }
-    
-    if (tokenError) tokenError.classList.add('hidden');
-    appState.apiToken = token;
-    saveState();
-    
-    // Mostrar paso 3 y estado de conexión
-    showStep(3);
-    if (connectionStatus) connectionStatus.innerHTML = '<p>Conectando a la API...</p>';
-    
-    try {
-      // Construir la URL correctamente
-      const baseUrl = appState.apiUrl.endsWith('/') 
-        ? appState.apiUrl.slice(0, -1) 
-        : appState.apiUrl;
-      
-      console.log('URL de la solicitud:', baseUrl);
-      console.log('Token usado:', appState.apiToken);
-      
-      // Usar solo el método de autenticación seleccionado
-      const authType = appState.authType || 'token-only';
-      const authHeader = appState.authHeader || 'Authorization';
-      
-      let requestUrl = baseUrl;
-      let headers = {};
-      let options = {
-        method: 'GET',
-        credentials: 'include' // Incluir cookies
-      };
-      
-      if (authType === 'url-param') {
-        // Agregar token como parámetro de URL
-        const param = appState.authParam || 'token';
-        const separator = baseUrl.includes('?') ? '&' : '?';
-        requestUrl = `${baseUrl}${separator}${param}=${appState.apiToken}`;
-        headers = {
-          'Content-Type': 'application/json',
-          'Accept': '*/*'
-        };
-      } else {
-        // Usar encabezados de autenticación
-        headers = createAuthHeaders(appState.apiToken, authType, authHeader);
-      }
-      
-      options.headers = headers;
-      
-      console.log('Realizando solicitud con opciones:', {
-        url: requestUrl,
-        headers: headers
-      });
-      
-      const response = await fetch(requestUrl, options);
-      
-      console.log('Respuesta:', {
-        status: response.status,
-        statusText: response.statusText
-      });
-      
-      if (response.ok) {
-        const data = await response.json();
-        console.log('Respuesta de la API:', data);
-        
-        // Procesar los datos
-        processApiResponse(data);
-      } else {
-        // Manejar error
-        if (connectionStatus) {
-          connectionStatus.innerHTML = `<p class="error">Error de conexión: ${response.status} ${response.statusText}</p>`;
-          
-          // Agregar botón para probar todos los métodos
-          const tryAllBtn = document.createElement('button');
-          tryAllBtn.className = 'primary-button';
-          tryAllBtn.textContent = 'Probar todos los métodos de autenticación';
-          tryAllBtn.addEventListener('click', () => {
-            document.getElementById('testAllAuthBtn')?.click();
-          });
-          
-          connectionStatus.appendChild(document.createElement('br'));
-          connectionStatus.appendChild(tryAllBtn);
-        }
-      }
-    } catch (error) {
-      console.error('Error en la solicitud:', error);
-      if (connectionStatus) {
-        connectionStatus.innerHTML = `<p class="error">Error de conexión: ${error.message}</p>`;
-      }
-    }
-  });
-}
-
-// Función para procesar la respuesta de la API
-function processApiResponse(data) {
-  // Guardar los datos completos
-  appState.rawData = data;
-  
-  // Procesar los datos según su tipo
-  if (Array.isArray(data)) {
-    // Si es un array, cada elemento es un recurso
-    appState.resources = data.map((item, index) => {
-      return {
-        id: item.id || index,
-        name: item.name || `Recurso ${index + 1}`,
-        data: item
-      };
-    });
-  } else if (typeof data === 'object' && data !== null) {
-    // Si es un objeto, intentar extraer recursos
-    if (data.resources && Array.isArray(data.resources)) {
-      // Si tiene una propiedad 'resources' que es un array
-      appState.resources = data.resources.map((item, index) => {
-        return {
-          id: item.id || index,
-          name: item.name || `Recurso ${index + 1}`,
-          data: item
-        };
-      });
+    if (result.success) {
+      connectionStatus.innerHTML = `<p class="success">${result.message}</p>`;
+      apiConnection.saveConfig();
+      loadResources();
     } else {
-      // Si es un objeto sin propiedad 'resources', tratar cada propiedad como un recurso
-      appState.resources = Object.keys(data).map((key, index) => {
-        const value = data[key];
-        return {
-          id: index,
-          name: key,
-          data: value
-        };
+      let errorMessage = result.message;
+
+      // Si es un error 401, dar instrucciones más específicas
+      if (errorMessage.includes("401")) {
+        errorMessage +=
+          "<br><br>Posibles soluciones:<br>" +
+          "1. Verifica que el token sea correcto<br>" +
+          "2. El token puede haber expirado, solicita uno nuevo<br>" +
+          "3. Asegúrate de tener los permisos necesarios";
+      }
+
+      // Si es un error de rate limiting (429)
+      if (
+        errorMessage.includes("429") ||
+        errorMessage.includes("demasiadas solicitudes")
+      ) {
+        errorMessage +=
+          "<br><br>Has alcanzado el límite de solicitudes permitidas. Posibles soluciones:<br>" +
+          "1. Espera unos minutos antes de intentar nuevamente<br>" +
+          "2. Reduce la frecuencia de tus solicitudes<br>" +
+          "3. Contacta al administrador de la API si necesitas un límite mayor";
+      }
+
+      connectionStatus.innerHTML = `<p class="error">${errorMessage}</p>`;
+
+      // Agregar botón para volver a configurar
+      const retryButton = document.createElement("button");
+      retryButton.textContent = "Volver a configurar";
+      retryButton.addEventListener("click", () => {
+        step3.classList.add("hidden");
+        step2.classList.remove("hidden");
       });
+      connectionStatus.appendChild(retryButton);
     }
-  } else {
-    // Si no es ni array ni objeto, crear un único recurso
-    appState.resources = [{
-      id: 0,
-      name: 'Respuesta',
-      data: data
-    }];
+  } catch (error) {
+    connectionStatus.innerHTML = `<p class="error">Error inesperado: ${error.message}</p>`;
+
+    // Agregar botón para volver a intentar
+    const retryButton = document.createElement("button");
+    retryButton.textContent = "Volver a configurar";
+    retryButton.addEventListener("click", () => {
+      step3.classList.add("hidden");
+      step2.classList.remove("hidden");
+    });
+    connectionStatus.appendChild(retryButton);
   }
-  
-  saveState();
-  
-  if (connectionStatus) connectionStatus.innerHTML = '<p class="success">Conectado correctamente</p>';
-  displayResources(appState.resources);
-  if (resourcesContainer) resourcesContainer.classList.remove('hidden');
 }
 
-// Volver de recursos a token
-if (backToTokenBtn) {
-    backToTokenBtn.addEventListener('click', () => {
-        showStep(2);
-      });
-    }
-    
-    // Volver de datos de recurso a lista de recursos
-    if (backToResourcesBtn) {
-      backToResourcesBtn.addEventListener('click', () => {
-        showStep(3);
-      });
-    }
-    
-    // Mostrar lista de recursos
-    function displayResources(resources) {
-      if (!resourceList) return;
-      
-      resourceList.innerHTML = '';
-      
-      resources.forEach((resource) => {
-        const resourceElement = document.createElement('div');
-        resourceElement.className = 'resource-item';
-        resourceElement.textContent = resource.name;
-        resourceElement.addEventListener('click', () => {
-          showResourceDetails(resource);
-        });
-        
-        resourceList.appendChild(resourceElement);
-      });
-    }
-    
-    // Reemplazar la función showResourceDetails existente con esta versión mejorada
-    function showResourceDetails(resource) {
-      appState.currentResource = resource;
-      
-      if (currentResourceSpan) currentResourceSpan.textContent = resource.name;
-      if (resourceData) {
-        // Limpiar el contenedor
-        resourceData.innerHTML = '';
-        
-        // Crear tarjetas HTML en lugar de mostrar JSON crudo
-        if (Array.isArray(resource.data)) {
-          // Si es un array, crear una tarjeta para cada elemento
-          resource.data.forEach((item, index) => {
-            const card = createDataCard(item, `Elemento ${index + 1}`);
-            resourceData.appendChild(card);
-          });
-        } else if (typeof resource.data === 'object' && resource.data !== null) {
-          // Si es un objeto, crear una tarjeta para él
-          const card = createDataCard(resource.data, resource.name);
-          resourceData.appendChild(card);
-        } else {
-          // Si es un valor primitivo, mostrarlo en una tarjeta simple
-          const card = document.createElement('div');
-          card.className = 'data-card';
-          card.innerHTML = `
-            <div class="card-header">
-              <h3>${resource.name}</h3>
-            </div>
-            <div class="card-body">
-              <p>${resource.data}</p>
-            </div>
-          `;
-          resourceData.appendChild(card);
-        }
-        
-        // Agregar botón para ver JSON original
-        const viewJsonBtn = document.createElement('button');
-        viewJsonBtn.className = 'secondary-button';
-        viewJsonBtn.textContent = 'Ver JSON original';
-        viewJsonBtn.addEventListener('click', () => {
-          // Mostrar el JSON original en un modal
-          showJsonModal(resource.data);
-        });
-        
-        resourceData.appendChild(document.createElement('br'));
-        resourceData.appendChild(viewJsonBtn);
-      }
-      
-      showStep(4);
-    }
+/**
+ * Función para cargar recursos disponibles
+ */
+function loadResources() {
+  const resources = apiConnection.getResources();
 
-    // Función para crear una tarjeta de datos a partir de un objeto
-    function createDataCard(data, title = 'Datos') {
-      const card = document.createElement('div');
-      card.className = 'data-card';
-      
-      // Crear el encabezado de la tarjeta
-      const cardHeader = document.createElement('div');
-      cardHeader.className = 'card-header';
-      
-      const cardTitle = document.createElement('h3');
-      cardTitle.textContent = title;
-      cardHeader.appendChild(cardTitle);
-      
-      // Crear el cuerpo de la tarjeta
-      const cardBody = document.createElement('div');
-      cardBody.className = 'card-body';
-      
-      // Procesar los datos para mostrarlos en la tarjeta
-      if (typeof data === 'object' && data !== null) {
-        // Crear una lista de propiedades
-        const propsList = document.createElement('div');
-        propsList.className = 'properties-list';
-        
-        Object.entries(data).forEach(([key, value]) => {
-          const propItem = document.createElement('div');
-          propItem.className = 'property-item';
-          
-          const propLabel = document.createElement('div');
-          propLabel.className = 'property-label';
-          propLabel.textContent = key;
-          
-          const propValue = document.createElement('div');
-          propValue.className = 'property-value';
-          
-          // Formatear el valor según su tipo
-          if (value === null) {
-            propValue.textContent = 'null';
-            propValue.classList.add('null-value');
-          } else if (typeof value === 'object') {
-            // Si es un objeto anidado, mostrar un resumen y un botón para expandir
-            propValue.textContent = Array.isArray(value) 
-              ? `Array [${value.length} elementos]` 
-              : `Objeto {${Object.keys(value).length} propiedades}`;
-            propValue.classList.add('object-value');
-            
-            // Botón para expandir/colapsar
-            const expandBtn = document.createElement('button');
-            expandBtn.className = 'expand-btn';
-            expandBtn.textContent = 'Expandir';
-            expandBtn.dataset.expanded = 'false';
-            
-            // Contenedor para el objeto expandido
-            const expandedContent = document.createElement('div');
-            expandedContent.className = 'expanded-content hidden';
-            
-            // Al hacer clic, mostrar/ocultar el contenido expandido
-            expandBtn.addEventListener('click', () => {
-              if (expandBtn.dataset.expanded === 'false') {
-                // Expandir y mostrar el contenido
-                expandBtn.dataset.expanded = 'true';
-                expandBtn.textContent = 'Colapsar';
-                expandedContent.classList.remove('hidden');
-                
-                // Si aún no se ha generado el contenido, crearlo
-                if (expandedContent.children.length === 0) {
-                  const nestedCard = createDataCard(value, key);
-                  expandedContent.appendChild(nestedCard);
-                }
-              } else {
-                // Colapsar y ocultar el contenido
-                expandBtn.dataset.expanded = 'false';
-                expandBtn.textContent = 'Expandir';
-                expandedContent.classList.add('hidden');
-              }
-            });
-            
-            propValue.appendChild(expandBtn);
-            propItem.appendChild(expandedContent);
-          } else if (typeof value === 'boolean') {
-            propValue.textContent = value ? 'true' : 'false';
-            propValue.classList.add(value ? 'true-value' : 'false-value');
-          } else if (typeof value === 'number') {
-            propValue.textContent = value;
-            propValue.classList.add('number-value');
-          } else if (typeof value === 'string') {
-            // Detectar si es una URL o una imagen
-            if (value.match(/^(http|https):\/\/[^\s]+$/)) {
-              if (value.match(/\.(jpg|jpeg|png|gif|webp|svg)$/i)) {
-                // Es una imagen
-                const img = document.createElement('img');
-                img.src = value;
-                img.alt = key;
-                img.className = 'card-image';
-                propValue.appendChild(img);
-              } else {
-                // Es una URL
-                const link = document.createElement('a');
-                link.href = value;
-                link.textContent = value;
-                link.target = '_blank';
-                propValue.appendChild(link);
-              }
-            } else {
-              propValue.textContent = value;
-            }
-            propValue.classList.add('string-value');
-          } else {
-            propValue.textContent = String(value);
-          }
-          
-          propItem.appendChild(propLabel);
-          propItem.appendChild(propValue);
-          propsList.appendChild(propItem);
-        });
-        
-        cardBody.appendChild(propsList);
-      } else {
-        // Para valores primitivos
-        const valueElement = document.createElement('p');
-        valueElement.textContent = String(data);
-        cardBody.appendChild(valueElement);
-      }
-      
-      // Ensamblar la tarjeta
-      card.appendChild(cardHeader);
-      card.appendChild(cardBody);
-      
-      return card;
-    }
+  if (resources && resources.length > 0) {
+    resourceList.innerHTML = "";
 
-    // Función para mostrar un modal con el JSON original
-    function showJsonModal(data) {
-      // Crear el modal
-      const modal = document.createElement('div');
-      modal.className = 'modal';
-      
-      // Contenido del modal
-      const modalContent = document.createElement('div');
-      modalContent.className = 'modal-content';
-      
-      // Botón de cierre
-      const closeBtn = document.createElement('span');
-      closeBtn.className = 'close';
-      closeBtn.innerHTML = '×';
-      closeBtn.addEventListener('click', () => {
-        document.body.removeChild(modal);
-      });
-      
-      // Título
-      const title = document.createElement('h3');
-      title.textContent = 'JSON Original';
-      
-      // Contenido JSON
-      const jsonPre = document.createElement('pre');
-      jsonPre.textContent = JSON.stringify(data, null, 2);
-      
-      // Botón para copiar
-      const copyBtn = document.createElement('button');
-      copyBtn.className = 'primary-button';
-      copyBtn.textContent = 'Copiar JSON';
-      copyBtn.addEventListener('click', () => {
-        copyToClipboard(JSON.stringify(data, null, 2));
-      });
-      
-      // Botón para cerrar
-      const closeButton = document.createElement('button');
-      closeButton.className = 'secondary-button';
-      closeButton.textContent = 'Cerrar';
-      closeButton.addEventListener('click', () => {
-        document.body.removeChild(modal);
-      });
-      
-      // Ensamblar el modal
-      modalContent.appendChild(closeBtn);
-      modalContent.appendChild(title);
-      modalContent.appendChild(jsonPre);
-      
-      const buttonContainer = document.createElement('div');
-      buttonContainer.className = 'button-container';
-      buttonContainer.appendChild(copyBtn);
-      buttonContainer.appendChild(closeButton);
-      
-      modalContent.appendChild(buttonContainer);
-      modal.appendChild(modalContent);
-      
-      // Agregar al body
-      document.body.appendChild(modal);
-    }
-    
-    // Función para crear un elemento de interfaz de usuario
-    function createUIElement(tag, className, textContent = '') {
-      const element = document.createElement(tag);
-      if (className) element.className = className;
-      if (textContent) element.textContent = textContent;
-      return element;
-    }
-    
-    // Función para mostrar un mensaje de notificación temporal
-    function showNotification(message, type = 'info', duration = 3000) {
-      // Crear el elemento de notificación si no existe
-      let notification = document.getElementById('notification');
-      if (!notification) {
-        notification = createUIElement('div', 'notification');
-        notification.id = 'notification';
-        document.body.appendChild(notification);
-      }
-      
-      // Establecer el tipo y mensaje
-      notification.className = `notification ${type}`;
-      notification.textContent = message;
-      notification.style.display = 'block';
-      
-      // Ocultar después de la duración especificada
-      setTimeout(() => {
-        notification.style.display = 'none';
-      }, duration);
-    }
-    
-    // Función para copiar datos al portapapeles
-    function copyToClipboard(text) {
-      try {
-        navigator.clipboard.writeText(text).then(
-          () => {
-            showNotification('Copiado al portapapeles', 'success');
-          },
-          (err) => {
-            console.error('Error al copiar:', err);
-            showNotification('Error al copiar al portapapeles', 'error');
-          }
-        );
-      } catch (error) {
-        console.error('Error al acceder al portapapeles:', error);
-        
-        // Fallback para navegadores que no soportan clipboard API
-        const textarea = document.createElement('textarea');
-        textarea.value = text;
-        textarea.style.position = 'fixed';
-        document.body.appendChild(textarea);
-        textarea.focus();
-        textarea.select();
-        
-        try {
-          const successful = document.execCommand('copy');
-          if (successful) {
-            showNotification('Copiado al portapapeles', 'success');
-          } else {
-            showNotification('Error al copiar al portapapeles', 'error');
-          }
-        } catch (err) {
-          console.error('Error al ejecutar comando de copia:', err);
-          showNotification('Error al copiar al portapapeles', 'error');
-        }
-        
-        document.body.removeChild(textarea);
-      }
-    }
-    
-    // Función para mejorar la visualización de los datos del recurso
-    function enhanceResourceDataDisplay() {
-      // Agregar botones de acción a cada vista de recurso
-      const resourceDataContainers = document.querySelectorAll('.resource-data pre');
-      
-      resourceDataContainers.forEach(container => {
-        // Evitar duplicar botones
-        if (container.parentNode.querySelector('.resource-actions')) {
-          return;
-        }
-        
-        const actionsContainer = createUIElement('div', 'resource-actions');
-        
-        // Botón para copiar
-        const copyBtn = createUIElement('button', 'action-button', 'Copiar');
-        copyBtn.addEventListener('click', () => {
-          copyToClipboard(container.textContent);
-        });
-        
-        actionsContainer.appendChild(copyBtn);
-        
-        // Insertar antes del contenedor de datos
-        container.parentNode.insertBefore(actionsContainer, container);
-      });
-    }
-    
-    // Ejecutar mejoras de UI cuando se carga el DOM
-    document.addEventListener('DOMContentLoaded', () => {
-      // Inicializar la aplicación
-      loadState();
-      
-      // Agregar selector de tipo de autenticación
-      addAuthTypeSelector();
-      
-      // Mejorar la visualización después de cargar los datos
-      const observer = new MutationObserver((mutations) => {
-        mutations.forEach((mutation) => {
-          if (mutation.type === 'childList' && 
-              mutation.target.classList.contains('resource-data')) {
-            enhanceResourceDataDisplay();
-          }
-        });
-      });
-      
-      // Observar cambios en el contenedor de datos de recursos
-      if (resourceData) {
-        observer.observe(resourceData, { childList: true });
-      }
+    resources.forEach((resource) => {
+      const resourceItem = document.createElement("div");
+      resourceItem.className = "resource-item";
+      resourceItem.textContent = resource;
+      resourceItem.addEventListener("click", () =>
+        loadResourceData(resource)
+      );
+      resourceList.appendChild(resourceItem);
     });
-    
-    // Función para agregar selector de tipo de autenticación
-    function addAuthTypeSelector() {
-      const tokenContainer = document.querySelector('#step2 .form-group');
-      if (!tokenContainer) return;
-      
-      // Verificar si ya existe el selector
-      if (document.getElementById('authTypeSelector')) return;
-      
-      // Crear el contenedor para el selector
-      const authTypeSelectorContainer = createUIElement('div', 'form-group');
-      
-      // Crear la etiqueta
-      const label = createUIElement('label', '', 'Tipo de autenticación:');
-      label.setAttribute('for', 'authTypeSelector');
-      
-      // Crear el selector
-      const select = createUIElement('select', 'form-control');
-      select.id = 'authTypeSelector';
-      
-      // Opciones de autenticación
-      const authTypes = [
-        { value: 'token-only', text: 'Token sin prefijo' },
-        { value: 'Bearer', text: 'Bearer Token' },
-        { value: 'Basic', text: 'Basic Auth' },
-        { value: 'API-Key', text: 'API Key' },
-        { value: 'Token', text: 'Simple Token' },
-        { value: 'custom', text: 'Personalizado (header:value)' },
-        { value: 'none', text: 'Sin autenticación' }
-      ];
-      
-      // Agregar opciones al selector
-      authTypes.forEach(type => {
-        const option = document.createElement('option');
-        option.value = type.value;
-        option.textContent = type.text;
-        
-        // Seleccionar el tipo actual
-        if (type.value.toLowerCase() === (appState.authType || 'token-only').toLowerCase()) {
-          option.selected = true;
-        }
-        
-        select.appendChild(option);
-      });
-      
-      // Manejar cambios en el selector
-      select.addEventListener('change', (e) => {
-        appState.authType = e.target.value;
-        saveState();
-        
-        // Actualizar el placeholder del input de token según el tipo seleccionado
-        updateTokenInputPlaceholder(e.target.value);
-      });
-      
-      // Agregar elementos al contenedor
-      authTypeSelectorContainer.appendChild(label);
-      authTypeSelectorContainer.appendChild(select);
-      
-      // Insertar antes del input de token
-      tokenContainer.parentNode.insertBefore(authTypeSelectorContainer, tokenContainer);
-      
-      // Inicializar el placeholder
-      updateTokenInputPlaceholder(appState.authType || 'token-only');
-    }
-    
-    // Función para actualizar el placeholder del input de token
-    function updateTokenInputPlaceholder(authType) {
-      if (!apiTokenInput) return;
-      
-      switch (authType.toLowerCase()) {
-        case 'token-only':
-          apiTokenInput.placeholder = 'Ingrese su token (sin prefijo)';
-          break;
-        case 'bearer':
-          apiTokenInput.placeholder = 'Ingrese su token JWT o OAuth';
-          break;
-        case 'basic':
-          apiTokenInput.placeholder = 'username:password o token Base64';
-          break;
-        case 'api-key':
-          apiTokenInput.placeholder = 'Ingrese su API Key';
-          break;
-        case 'token':
-          apiTokenInput.placeholder = 'Ingrese su token simple';
-          break;
-        case 'custom':
-          apiTokenInput.placeholder = 'Nombre-Cabecera: Valor';
-          break;
-        case 'none':
-          apiTokenInput.placeholder = 'No se requiere token (opcional)';
-          break;
-        default:
-          apiTokenInput.placeholder = 'Ingrese su token de autenticación';
+
+    resourcesContainer.classList.remove("hidden");
+  } else {
+    connectionStatus.innerHTML +=
+      "<p>No se encontraron recursos disponibles.</p>";
+  }
+}
+
+/**
+ * Función para cargar datos de un recurso específico
+ * @param {string} resource - Nombre del recurso
+ */
+async function loadResourceData(resource) {
+  currentResource.textContent = resource;
+  resourceData.innerHTML = "<p>Cargando datos...</p>";
+
+  step3.classList.add("hidden");
+  step4.classList.remove("hidden");
+
+  try {
+    const result = await apiConnection.getResourceData(resource);
+
+    if (result.success) {
+      displayResourceData(result.data);
+    } else {
+      let errorMessage = result.message;
+
+      // Si es un error 401, dar instrucciones más específicas
+      if (errorMessage.includes("401")) {
+        errorMessage +=
+          "<br><br>Posibles soluciones:<br>" +
+          "1. Verifica que el token sea correcto<br>" +
+          "2. El token puede haber expirado, solicita uno nuevo<br>" +
+          "3. Asegúrate de tener los permisos necesarios";
       }
-    }
-    
-    // Función para realizar una solicitud a la API con reintentos
-    async function fetchWithRetry(url, options, maxRetries = 3) {
-      let lastError;
-      
-      for (let attempt = 0; attempt < maxRetries; attempt++) {
-        try {
-          const response = await fetch(url, options);
-          
-          if (response.ok) {
-            return await response.json();
+
+      // Si es un error de rate limiting (429)
+      if (
+        errorMessage.includes("429") ||
+        errorMessage.includes("demasiadas solicitudes")
+      ) {
+        errorMessage +=
+          "<br><br>Has alcanzado el límite de solicitudes permitidas. Posibles soluciones:<br>" +
+          "1. Espera unos minutos antes de intentar nuevamente<br>" +
+          "2. Reduce la frecuencia de tus solicitudes";
+
+        // Agregar botón para reintentar después de un tiempo
+        resourceData.innerHTML = `<p class="error">${errorMessage}</p>`;
+
+        const waitTime = 30; // 30 segundos
+        const retryLaterButton = document.createElement("button");
+        retryLaterButton.textContent = `Reintentar en ${waitTime} segundos`;
+        retryLaterButton.disabled = true;
+
+        let countdown = waitTime;
+        const timer = setInterval(() => {
+          countdown--;
+          retryLaterButton.textContent = `Reintentar en ${countdown} segundos`;
+
+          if (countdown <= 0) {
+            clearInterval(timer);
+            retryLaterButton.textContent = "Reintentar ahora";
+            retryLaterButton.disabled = false;
           }
-          
-          // Si la respuesta no es exitosa, lanzar un error con el estado
-          lastError = new Error(`HTTP error: ${response.status}`);
-          lastError.status = response.status;
-          
-          // Si es un error de autenticación, no reintentar
-          if (response.status === 401 || response.status === 403) {
-            break;
+        }, 1000);
+
+        retryLaterButton.addEventListener("click", () => {
+          if (!retryLaterButton.disabled) {
+            loadResourceData(resource);
           }
-          
-          // Esperar antes de reintentar (backoff exponencial)
-          await new Promise(resolve => setTimeout(resolve, Math.pow(2, attempt) * 1000));
-        } catch (error) {
-          lastError = error;
-          console.error(`Intento ${attempt + 1} fallido:`, error);
-          
-          // Esperar antes de reintentar
-          await new Promise(resolve => setTimeout(resolve, Math.pow(2, attempt) * 1000));
-        }
-      }
-      
-      throw lastError;
-    }
-    
-    // Función para exportar los datos como CSV
-    function exportAsCSV(data) {
-      if (!data || !Array.isArray(data)) {
-        showNotification('No se pueden exportar los datos como CSV', 'error');
+        });
+
+        resourceData.appendChild(retryLaterButton);
         return;
       }
-      
-      try {
-        // Obtener todas las claves únicas
-        const allKeys = new Set();
-        data.forEach(item => {
-          Object.keys(item).forEach(key => allKeys.add(key));
+
+      resourceData.innerHTML = `<p class="error">${errorMessage}</p>`;
+
+      // Si es un error de autenticación, mostrar un botón para volver a la configuración del token
+      if (
+        result.message.includes("401") ||
+        result.message.toLowerCase().includes("autenticación")
+      ) {
+        const retryButton = document.createElement("button");
+        retryButton.textContent = "Volver a configurar el token";
+        retryButton.addEventListener("click", () => {
+          step4.classList.add("hidden");
+          step2.classList.remove("hidden");
         });
-        
-        const headers = Array.from(allKeys);
-        
-        // Crear filas de datos
-        const rows = data.map(item => {
-          return headers.map(header => {
-            const value = item[header];
-            // Manejar valores que podrían contener comas o comillas
-            if (value === null || value === undefined) {
-              return '';
-            } else if (typeof value === 'object') {
-              return `"${JSON.stringify(value).replace(/"/g, '""')}"`;
-            } else {
-              return `"${String(value).replace(/"/g, '""')}"`;
-            }
-          }).join(',');
-        });
-        
-        // Combinar encabezados y filas
-        const csvContent = [
-          headers.join(','),
-          ...rows
-        ].join('\n');
-        
-        // Crear y descargar el archivo
-        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.setAttribute('href', url);
-        link.setAttribute('download', 'api_data_export.csv');
-        link.style.visibility = 'hidden';
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        
-        showNotification('Datos exportados como CSV', 'success');
-      } catch (error) {
-        console.error('Error al exportar como CSV:', error);
-        showNotification('Error al exportar como CSV', 'error');
+        resourceData.appendChild(retryButton);
       }
     }
-    
-    // Función para realizar una solicitud a la API con el token actual
-    async function makeApiRequest(endpoint, method = 'GET', body = null) {
-      try {
-        // Construir la URL completa
-        const baseUrl = appState.apiUrl.endsWith('/') 
-          ? appState.apiUrl.slice(0, -1) 
-          : appState.apiUrl;
-        
-        const url = endpoint.startsWith('/') 
-          ? `${baseUrl}${endpoint}` 
-          : `${baseUrl}/${endpoint}`;
-        
-        // Opciones de la solicitud
-        const options = {
-          method: method,
-          credentials: 'include', // Incluir cookies
-          headers: {}
-        };
-        
-        // Agregar encabezados según el tipo de autenticación
-        if (appState.authType === 'url-param' && appState.authParam) {
-          // Agregar token como parámetro de URL
-          const separator = url.includes('?') ? '&' : '?';
-          url = `${url}${separator}${appState.authParam}=${appState.apiToken}`;
-        } else if (appState.authType !== 'none') {
-          // Usar encabezados de autenticación
-          options.headers = createAuthHeaders(
-            appState.apiToken, 
-            appState.authType, 
-            appState.authHeader
-          );
-        } else {
-          // Sin autenticación, solo encabezados básicos
-          options.headers = {
-            'Content-Type': 'application/json',
-            'Accept': '*/*'
-          };
-        }
-        
-        // Agregar cuerpo si es necesario
-        if (body && method !== 'GET' && method !== 'HEAD') {
-          options.body = JSON.stringify(body);
-        }
-        
-        console.log('Realizando solicitud a:', url);
-        console.log('Opciones:', options);
-        
-        // Realizar la solicitud
-        const response = await fetch(url, options);
-        
-        if (!response.ok) {
-          throw new Error(`Error HTTP: ${response.status} ${response.statusText}`);
-        }
-        
-        // Intentar parsear la respuesta como JSON
-        try {
-          return await response.json();
-        } catch (jsonError) {
-          // Si no es JSON, devolver el texto
-          return await response.text();
-        }
-      } catch (error) {
-        console.error('Error en la solicitud API:', error);
-        throw error;
-      }
+  } catch (error) {
+    resourceData.innerHTML = `<p class="error">Error inesperado: ${error.message}</p>`;
+
+    // Agregar botón para volver a intentar
+    const retryButton = document.createElement("button");
+    retryButton.textContent = "Volver a intentar";
+    retryButton.addEventListener("click", () => loadResourceData(resource));
+    resourceData.appendChild(retryButton);
+  }
+}
+
+/**
+ * Función para añadir el token myft a una URL de imagen si no lo tiene
+ * @param {string} url - URL de la imagen
+ * @returns {string} - URL con token añadido si es necesario
+ */
+function addMyFilesTokenToUrl(url) {
+  if (!url) return url;
+
+  try {
+    // Si la URL es relativa, construir una URL completa
+    let fullUrl = url;
+    if (url.startsWith("/")) {
+      const baseUrlObj = new URL(apiConnection.baseUrl);
+      fullUrl = `${baseUrlObj.origin}${url}`;
     }
-    
-    // Agregar botón para probar todos los métodos de autenticación
-    function addTestAllAuthButton() {
-      const tokenContainer = document.querySelector('#step2 .button-group');
-      if (!tokenContainer) return;
-      
-      // Verificar si ya existe el botón
-      if (document.getElementById('testAllAuthBtn')) return;
-      
-      // Crear el botón
-      const testAllAuthBtn = createUIElement('button', 'secondary-button', 'Probar todos los métodos');
-      testAllAuthBtn.id = 'testAllAuthBtn';
-      
-      // Manejar clic en el botón
-      testAllAuthBtn.addEventListener('click', async () => {
-        const token = apiTokenInput.value.trim();
-        
-        if (!token) {
-            if (tokenError) tokenError.classList.remove('hidden');
-            return;
-          }
-          
-          if (tokenError) tokenError.classList.add('hidden');
-          appState.apiToken = token;
-          saveState();
-          
-          // Mostrar estado de prueba
-          showNotification('Probando todos los métodos de autenticación...', 'info');
-          
-          try {
-            // Construir la URL correctamente
-            const baseUrl = appState.apiUrl.endsWith('/') 
-              ? appState.apiUrl.slice(0, -1) 
-              : appState.apiUrl;
-            
-            console.log('URL de la solicitud:', baseUrl);
-            console.log('Token usado:', appState.apiToken);
-            
-            // Configuraciones de autenticación a probar
-            const authConfigurations = [
-              // Token sin prefijo (solo el token)
-              { type: 'token-only', header: 'Authorization', name: 'Token sin prefijo' },
-              // Bearer token estándar
-              { type: 'Bearer', header: 'Authorization', name: 'Bearer Token' },
-              // Token personalizado
-              { type: 'token-only', header: 'Token', name: 'Token en cabecera Token' },
-              // API Key
-              { type: 'api-key', header: 'X-API-Key', name: 'API Key' },
-              // Sin autenticación
-              { type: 'none', name: 'Sin autenticación' },
-              // Personalizado - token como parámetro de URL
-              { type: 'url-param', param: 'token', name: 'Token como parámetro URL' },
-              // Personalizado - token como parámetro de URL alternativo
-              { type: 'url-param', param: 'api_key', name: 'API Key como parámetro URL' }
-            ];
-            
-            let results = [];
-            
-            for (const config of authConfigurations) {
-              try {
-                console.log(`Probando configuración: ${JSON.stringify(config)}`);
-                
-                let requestUrl = baseUrl;
-                let headers = {};
-                let options = {
-                  method: 'GET',
-                  credentials: 'include' // Incluir cookies
-                };
-                
-                if (config.type === 'url-param') {
-                  // Agregar token como parámetro de URL
-                  const separator = baseUrl.includes('?') ? '&' : '?';
-                  requestUrl = `${baseUrl}${separator}${config.param}=${appState.apiToken}`;
-                  headers = {
-                    'Content-Type': 'application/json',
-                    'Accept': '*/*'
-                  };
-                } else {
-                  // Usar encabezados de autenticación
-                  headers = createAuthHeaders(appState.apiToken, config.type, config.header);
-                }
-                
-                options.headers = headers;
-                
-                console.log('Realizando solicitud con opciones:', {
-                  url: requestUrl,
-                  headers: headers
-                });
-                
-                const response = await fetch(requestUrl, options);
-                
-                results.push({
-                  name: config.name,
-                  status: response.status,
-                  statusText: response.statusText,
-                  success: response.ok
-                });
-                
-                console.log(`Respuesta para configuración ${config.name}:`, {
-                  status: response.status,
-                  statusText: response.statusText,
-                  success: response.ok
-                });
-                
-              } catch (configError) {
-                console.error(`Error al intentar con configuración ${config.name}:`, configError);
-                results.push({
-                  name: config.name,
-                  status: 'Error',
-                  statusText: configError.message,
-                  success: false
-                });
-              }
-            }
-            
-            // Mostrar resultados
-            let resultsHtml = '<div class="auth-test-results">';
-            resultsHtml += '<h3>Resultados de pruebas de autenticación</h3>';
-            resultsHtml += '<table>';
-            resultsHtml += '<tr><th>Método</th><th>Estado</th><th>Resultado</th></tr>';
-            
-            results.forEach(result => {
-              resultsHtml += `<tr>
-                <td>${result.name}</td>
-                <td>${result.status} ${result.statusText}</td>
-                <td class="${result.success ? 'success' : 'error'}">${result.success ? 'Éxito' : 'Fallido'}</td>
-              </tr>`;
-            });
-            
-            resultsHtml += '</table></div>';
-            
-            // Crear modal para mostrar resultados
-            const modal = document.createElement('div');
-            modal.className = 'modal';
-            modal.innerHTML = `
-              <div class="modal-content">
-                <span class="close">×</span>
-                ${resultsHtml}
-                <button class="primary-button close-modal">Cerrar</button>
-              </div>
-            `;
-            
-            document.body.appendChild(modal);
-            
-            // Manejar cierre del modal
-            modal.querySelector('.close').addEventListener('click', () => {
-              document.body.removeChild(modal);
-            });
-            
-            modal.querySelector('.close-modal').addEventListener('click', () => {
-              document.body.removeChild(modal);
-            });
-            
-            // Configurar automáticamente el método exitoso
-            const successfulConfig = results.find(result => result.success);
-            if (successfulConfig) {
-              const matchingConfig = authConfigurations.find(config => config.name === successfulConfig.name);
-              if (matchingConfig) {
-                if (matchingConfig.type === 'url-param') {
-                  appState.authType = 'url-param';
-                  appState.authParam = matchingConfig.param;
-                } else {
-                  appState.authType = matchingConfig.type;
-                  appState.authHeader = matchingConfig.header || 'Authorization';
-                }
-                
-                saveState();
-                
-                // Actualizar el selector de tipo de autenticación
-                const authTypeSelector = document.getElementById('authTypeSelector');
-                if (authTypeSelector) {
-                  for (let i = 0; i < authTypeSelector.options.length; i++) {
-                    if (authTypeSelector.options[i].value.toLowerCase() === matchingConfig.type.toLowerCase()) {
-                      authTypeSelector.selectedIndex = i;
-                      break;
-                    }
-                  }
-                }
-                
-                showNotification(`Método exitoso configurado: ${successfulConfig.name}`, 'success');
-              }
-            } else {
-              showNotification('Ningún método de autenticación tuvo éxito', 'error');
-            }
-            
-          } catch (error) {
-            console.error('Error al probar métodos de autenticación:', error);
-            showNotification('Error al probar métodos de autenticación', 'error');
-          }
-        });
-        
-        // Agregar el botón al contenedor
-        tokenContainer.appendChild(testAllAuthBtn);
-      }
-      
-      // Función para agregar botón de exportación CSV
-      function addExportButton() {
-        const resourceDataContainer = document.querySelector('#step4');
-        if (!resourceDataContainer) return;
-        
-        // Verificar si ya existe el botón
-        if (document.getElementById('exportCsvBtn')) return;
-        
-        // Crear el botón
-        const exportBtn = createUIElement('button', 'secondary-button', 'Exportar CSV');
-        exportBtn.id = 'exportCsvBtn';
-        
-        // Manejar clic en el botón
-        exportBtn.addEventListener('click', () => {
-          if (appState.rawData && Array.isArray(appState.rawData)) {
-            exportAsCSV(appState.rawData);
-          } else if (appState.currentResource && appState.currentResource.data && Array.isArray(appState.currentResource.data)) {
-            exportAsCSV(appState.currentResource.data);
-          } else {
-            showNotification('No hay datos en formato array para exportar', 'warning');
-          }
-        });
-        
-        // Agregar el botón después del botón de volver
-        const backButton = resourceDataContainer.querySelector('button');
-        if (backButton) {
-          backButton.parentNode.insertBefore(exportBtn, backButton.nextSibling);
-        } else {
-          resourceDataContainer.appendChild(exportBtn);
-        }
-      }
-      
-      // Función para detectar y manejar errores CORS
-      function handleCorsError(error) {
-        if (
-          error.message.includes('CORS') || 
-          error.message.includes('Cross-Origin') ||
-          error.message.includes('Access-Control-Allow-Origin')
-        ) {
-          showNotification('Error CORS: La API no permite solicitudes desde este origen', 'error');
-          
-          // Sugerir soluciones
-          const modal = document.createElement('div');
-          modal.className = 'modal';
-          modal.innerHTML = `
-            <div class="modal-content">
-              <span class="close">×</span>
-              <h3>Error de Política CORS Detectado</h3>
-              <p>La API no permite solicitudes desde este origen debido a restricciones de seguridad CORS.</p>
-              <h4>Posibles soluciones:</h4>
-              <ol>
-                <li>Configurar la API para permitir solicitudes desde este origen</li>
-                <li>Usar un proxy CORS para evitar las restricciones</li>
-                <li>Ejecutar la extensión en el mismo dominio que la API</li>
-                <li>Usar una extensión de navegador para deshabilitar CORS (solo para desarrollo)</li>
-              </ol>
-              <button class="primary-button close-modal">Entendido</button>
-            </div>
-          `;
-          
-          document.body.appendChild(modal);
-          
-          // Manejar cierre del modal
-          modal.querySelector('.close').addEventListener('click', () => {
-            document.body.removeChild(modal);
-          });
-          
-          modal.querySelector('.close-modal').addEventListener('click', () => {
-            document.body.removeChild(modal);
-          });
-          
-          return true;
-        }
-        
-        return false;
-      }
-      
-      // Inicializar la aplicación con todas las mejoras
-      document.addEventListener('DOMContentLoaded', () => {
-        // Cargar estado
-        loadState();
-        
-        // Agregar selector de tipo de autenticación
-        addAuthTypeSelector();
-        
-        // Agregar botón para probar todos los métodos de autenticación
-        addTestAllAuthButton();
-        
-        // Agregar botón de exportación CSV
-        addExportButton();
-        
-        // Mejorar la visualización después de cargar los datos
-        const observer = new MutationObserver((mutations) => {
-          mutations.forEach((mutation) => {
-            if (mutation.type === 'childList' && 
-                mutation.target.classList.contains('resource-data')) {
-              enhanceResourceDataDisplay();
-            }
-          });
-        });
-        
-        // Observar cambios en el contenedor de datos de recursos
-        if (resourceData) {
-          observer.observe(resourceData, { childList: true });
+
+    // Verificar si la URL ya tiene el parámetro myft
+    const urlObj = new URL(fullUrl);
+    if (!urlObj.searchParams.has("myft") && apiConnection.token) {
+      // Añadir el token como parámetro myft
+      urlObj.searchParams.set("myft", apiConnection.token);
+      return urlObj.toString();
+    }
+
+    return fullUrl;
+  } catch (e) {
+    console.error("Error al procesar URL de imagen:", e);
+    return url;
+  }
+}
+
+/**
+ * Función para mostrar datos del recurso en formato de tarjetas
+ * @param {Array|Object} data - Datos del recurso
+ */
+function displayResourceData(data) {
+  resourceData.innerHTML = "";
+
+  // Función auxiliar para decodificar texto con caracteres especiales
+  function decodeText(text) {
+    if (typeof text !== "string") return text;
+
+    try {
+      // Intentar decodificar texto que podría estar mal codificado
+      return decodeURIComponent(escape(text));
+    } catch (e) {
+      console.warn("Error al decodificar texto:", e);
+      return text;
+    }
+  }
+
+  // Decodificar todos los textos en los datos
+  if (Array.isArray(data)) {
+    data = data.map((item) => {
+      const newItem = { ...item };
+      Object.keys(newItem).forEach((key) => {
+        if (typeof newItem[key] === "string") {
+          newItem[key] = decodeText(newItem[key]);
         }
       });
+      return newItem;
+    });
+  } else if (typeof data === "object" && data !== null) {
+    const newData = { ...data };
+    Object.keys(newData).forEach((key) => {
+      if (typeof newData[key] === "string") {
+        newData[key] = decodeText(newData[key]);
+      }
+    });
+    data = newData;
+  }
+
+  if (Array.isArray(data) && data.length > 0) {
+    // Crear contenedor para las tarjetas
+    const cardsContainer = document.createElement("div");
+    cardsContainer.className = "cards-container";
+    cardsContainer.style.display = "grid";
+    cardsContainer.style.gridTemplateColumns =
+      "repeat(auto-fill, minmax(250px, 1fr))";
+    cardsContainer.style.gap = "16px";
+    cardsContainer.style.padding = "16px";
+
+    // Crear una tarjeta para cada elemento
+    data.forEach((item) => {
+      const card = document.createElement("div");
+      card.className = "card";
+      card.style.border = "1px solid #ddd";
+      card.style.borderRadius = "8px";
+      card.style.padding = "16px";
+      card.style.boxShadow = "0 4px 8px rgba(0,0,0,0.1)";
+      card.style.backgroundColor = "#fff";
+      card.style.transition = "transform 0.3s ease";
+      card.style.overflow = "hidden";
+      card.style.display = "flex";
+      card.style.position = "relative"; // Para posicionamiento absoluto del botón de compartir
+
+      // Efecto hover
+      card.onmouseover = () => (card.style.transform = "translateY(-5px)");
+      card.onmouseout = () => (card.style.transform = "translateY(0)");
+
+            // Contenedor para la imagen (lado izquierdo)
+            const imageContainer = document.createElement("div");
+            imageContainer.style.flex = "0 0 40%";
+            imageContainer.style.marginRight = "16px";
       
+            // Contenedor para el contenido (lado derecho)
+            const contentContainer = document.createElement("div");
+            contentContainer.style.flex = "1";
+      
+            // Buscar imagen en el campo 'imagenes' si existe
+            let imageUrl = null;
+      
+            // Verificar si hay un campo 'imagenes' que es un array
+            if (
+              item.imagenes &&
+              Array.isArray(item.imagenes) &&
+              item.imagenes.length > 0
+            ) {
+              // Tomar la primera imagen del array
+              const firstImage = item.imagenes[0];
+      
+              // Verificar si la imagen tiene una URL
+              if (firstImage && firstImage.url) {
+                imageUrl = firstImage.url;
+                console.log("URL de imagen encontrada:", imageUrl);
+              }
+            } else {
+              // Buscar en otros campos comunes de imágenes
+              const imageProperties = [
+                "imagen",
+                "image",
+                "photo",
+                "foto",
+                "url",
+                "thumbnail",
+                "avatar",
+              ];
+              for (const prop of imageProperties) {
+                if (
+                  item[prop] &&
+                  typeof item[prop] === "string" &&
+                  (item[prop].startsWith("http") || item[prop].startsWith("/"))
+                ) {
+                  imageUrl = item[prop];
+                  console.log(
+                    "URL de imagen encontrada en propiedad:",
+                    prop,
+                    imageUrl
+                  );
+                  break;
+                }
+              }
+            }
+      
+            // Si encontramos una imagen, crear un contenedor para verla
+            if (imageUrl) {
+              console.log("URL de imagen encontrada:", imageUrl);
+      
+              // Crear un contenedor para la imagen con un botón para abrirla en una nueva pestaña
+              const imageViewContainer = document.createElement("div");
+              imageViewContainer.style.width = "100%";
+              imageViewContainer.style.height = "120px";
+              imageViewContainer.style.backgroundColor = "#f0f0f0";
+              imageViewContainer.style.borderRadius = "4px";
+              imageViewContainer.style.display = "flex";
+              imageViewContainer.style.flexDirection = "column";
+              imageViewContainer.style.alignItems = "center";
+              imageViewContainer.style.justifyContent = "center";
+              imageViewContainer.style.cursor = "pointer";
+              imageViewContainer.style.position = "relative";
+              imageViewContainer.style.overflow = "hidden";
+      
+              // Intentar cargar la imagen directamente
+              const img = document.createElement("img");
+              img.alt = "Imagen del producto";
+              img.style.width = "100%";
+              img.style.height = "100%";
+              img.style.objectFit = "cover";
+              img.style.borderRadius = "4px";
+              img.style.display = "none"; // Ocultar hasta que se cargue
+      
+              // Mostrar un mensaje mientras se carga
+              const loadingContainer = document.createElement("div");
+              loadingContainer.style.position = "absolute";
+              loadingContainer.style.top = "0";
+              loadingContainer.style.left = "0";
+              loadingContainer.style.width = "100%";
+              loadingContainer.style.height = "100%";
+              loadingContainer.style.display = "flex";
+              loadingContainer.style.flexDirection = "column";
+              loadingContainer.style.alignItems = "center";
+              loadingContainer.style.justifyContent = "center";
+              loadingContainer.style.backgroundColor = "#f0f0f0";
+      
+              // Agregar un icono de imagen usando SVG
+              const imgIcon = document.createElement("div");
+              imgIcon.innerHTML = `
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <rect x="3" y="3" width="18" height="18" rx="2" stroke="#666666" stroke-width="2"/>
+        <circle cx="8.5" cy="8.5" r="1.5" fill="#666666"/>
+        <path d="M6 16L8 14C8.5 13.5 9.5 13.5 10 14L14 18" stroke="#666666" stroke-width="2"/>
+        <path d="M14 16L16 14C16.5 13.5 17.5 13.5 18 14L21 17" stroke="#666666" stroke-width="2"/>
+      </svg>`;
+              imgIcon.style.marginBottom = "8px";
+      
+              const loadingText = document.createElement("div");
+              loadingText.textContent = "Cargando imagen...";
+              loadingText.style.fontSize = "12px";
+      
+              loadingContainer.appendChild(imgIcon);
+              loadingContainer.appendChild(loadingText);
+      
+              // Cuando la imagen se carga correctamente
+              img.onload = function () {
+                loadingContainer.style.display = "none";
+                img.style.display = "block";
+              };
+      
+              // Si hay error al cargar la imagen
+              img.onerror = function () {
+                loadingContainer.innerHTML = "";
+      
+                // Mostrar mensaje de error con SVG
+                const errorIcon = document.createElement("div");
+                errorIcon.innerHTML = `
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <rect x="3" y="3" width="18" height="18" rx="2" stroke="#666666" stroke-width="2"/>
+        <path d="M9 9L15 15" stroke="#666666" stroke-width="2"/>
+        <path d="M15 9L9 15" stroke="#666666" stroke-width="2"/>
+      </svg>`;
+                errorIcon.style.marginBottom = "8px";
+      
+                const errorText = document.createElement("div");
+                errorText.textContent = "Ver imagen";
+                errorText.style.fontSize = "12px";
+      
+                loadingContainer.appendChild(errorIcon);
+                loadingContainer.appendChild(errorText);
+      
+                // Hacer que el contenedor sea clickeable para abrir la imagen en una nueva pestaña
+                imageViewContainer.onclick = function () {
+                  window.open(imageUrl, "_blank");
+                };
+              };
+      
+              // Asignar la URL a la imagen
+              img.src = imageUrl;
+      
+              // Agregar elementos al contenedor
+              imageViewContainer.appendChild(img);
+              imageViewContainer.appendChild(loadingContainer);
+              imageContainer.appendChild(imageViewContainer);
+            } else {
+              // Si no hay imagen, mostrar un placeholder
+              showImagePlaceholder(imageContainer);
+            }
+      
+            // Agregar propiedades del item al contenido
+            const title = document.createElement("h3");
+            title.style.margin = "0 0 8px 0";
+            title.style.fontSize = "16px";
+            title.textContent =
+              item.nombre || item.name || item.title || "Sin título";
+            contentContainer.appendChild(title);
+      
+            // Mostrar otras propiedades relevantes
+            const properties = ["referencia", "precio", "descripcion", "id"];
+            properties.forEach((prop) => {
+              if (item[prop] !== undefined) {
+                const propElement = document.createElement("p");
+                propElement.style.margin = "4px 0";
+                propElement.style.fontSize = "14px";
+      
+                // Formatear precio si es necesario - CAMBIADO A DÓLARES
+                if (prop === "precio" && !isNaN(parseFloat(item[prop]))) {
+                  try {
+                    // Usar Intl.NumberFormat para formatear correctamente el precio con el símbolo $
+                    const formatter = new Intl.NumberFormat("en-US", {
+                      style: "currency",
+                      currency: "USD",
+                    });
+                    propElement.textContent = `${prop}: ${formatter.format(
+                      parseFloat(item[prop])
+                    )}`;
+                  } catch (e) {
+                    // Si hay un error en el formateo, mostrar el precio sin formato
+                    propElement.textContent = `${prop}: ${parseFloat(
+                      item[prop]
+                    ).toFixed(2)}`;
+                  }
+                } else {
+                  propElement.textContent = `${prop}: ${item[prop]}`;
+                }
+      
+                contentContainer.appendChild(propElement);
+              }
+            });
+      
+            // Agregar botón de compartir en WhatsApp
+            const shareButtonContainer = document.createElement("div");
+            shareButtonContainer.style.position = "absolute";
+            shareButtonContainer.style.top = "10px";
+            shareButtonContainer.style.right = "10px";
+            shareButtonContainer.style.zIndex = "10";
+            
+            const shareButton = document.createElement("button");
+            shareButton.className = "share-button";
+            shareButton.innerHTML = `
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
+                <path d="M13.5 1a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3zM11 2.5a2.5 2.5 0 1 1 .603 1.628l-6.718 3.12a2.5 2.5 0 0 1 0 1.504l6.718 3.12a2.5 2.5 0 1 1-.488.876l-6.718-3.12a2.5 2.5 0 1 1 0-3.256l6.718-3.12A2.5 2.5 0 0 1 11 2.5zm-8.5 4a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3zm11 5.5a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3z"/>
+              </svg>
+            `;
+            shareButton.style.backgroundColor = "#25D366";
+            shareButton.style.color = "white";
+            shareButton.style.border = "none";
+            shareButton.style.borderRadius = "50%";
+            shareButton.style.width = "36px";
+            shareButton.style.height = "36px";
+            shareButton.style.display = "flex";
+            shareButton.style.justifyContent = "center";
+            shareButton.style.alignItems = "center";
+            shareButton.style.cursor = "pointer";
+            shareButton.style.boxShadow = "0 2px 5px rgba(0,0,0,0.2)";
+            shareButton.title = "Compartir en WhatsApp";
+            
+            // Añadir efecto hover
+            shareButton.onmouseover = function() {
+              this.style.backgroundColor = "#128C7E";
+            };
+            shareButton.onmouseout = function() {
+              this.style.backgroundColor = "#25D366";
+            };
+            
+            // Añadir evento de clic para compartir
+            shareButton.addEventListener("click", (e) => {
+              e.stopPropagation(); // Evitar que el clic se propague a la tarjeta
+              if (typeof shareOnWhatsApp === 'function') {
+                shareOnWhatsApp(card);
+              } else {
+                alert("La funcionalidad de compartir no está disponible. Asegúrate de que el archivo compartir.js esté cargado.");
+              }
+            });
+            
+            shareButtonContainer.appendChild(shareButton);
+            card.appendChild(shareButtonContainer);
+      
+            // Agregar contenedores a la tarjeta
+            card.appendChild(imageContainer);
+            card.appendChild(contentContainer);
+      
+            // Agregar tarjeta al contenedor
+            cardsContainer.appendChild(card);
+          });
+      
+          resourceData.appendChild(cardsContainer);
+      
+          // Agregar información sobre el número de registros
+          const infoText = document.createElement("p");
+          infoText.className = "info-text";
+          infoText.textContent = `Se encontraron ${data.length} registros.`;
+          infoText.style.textAlign = "center";
+          infoText.style.marginTop = "16px";
+          infoText.style.color = "#666";
+          resourceData.appendChild(infoText);
+      
+          // Inicializar la funcionalidad de compartir si está disponible
+          if (typeof initCompartir === 'function') {
+            initCompartir();
+          }
+        } else if (typeof data === "object" && data !== null) {
+          // Mostrar objeto individual como lista de propiedades
+          const list = document.createElement("ul");
+          list.className = "data-list";
+          list.style.listStyle = "none";
+          list.style.padding = "0";
+      
+          Object.entries(data).forEach(([key, value]) => {
+            const item = document.createElement("li");
+            item.style.padding = "8px 0";
+            item.style.borderBottom = "1px solid #eee";
+      
+            if (value === null) {
+              item.innerHTML = `<strong>${key}:</strong> null`;
+            } else if (typeof value === "object") {
+              item.innerHTML = `<strong>${key}:</strong> <pre>${JSON.stringify(
+                value,
+                null,
+                2
+              )}</pre>`;
+            } else {
+              item.innerHTML = `<strong>${key}:</strong> ${value}`;
+            }
+      
+            list.appendChild(item);
+          });
+      
+          resourceData.appendChild(list);
+        } else {
+          resourceData.innerHTML =
+            "<p>No hay datos disponibles para este recurso o el formato no es reconocido.</p>";
+        }
+      }
+      
+      /**
+       * Verifica si una URL ya contiene el token myft
+       * @param {string} url - URL a verificar
+       * @returns {boolean} - True si la URL ya contiene el token
+       */
+      function hasMyFilesToken(url) {
+        try {
+          const urlObj = new URL(url);
+          return urlObj.searchParams.has("myft");
+        } catch (e) {
+          return false;
+        }
+      }
+      
+      /**
+       * Muestra error de imagen con SVG
+       * @param {HTMLElement} container - Contenedor donde mostrar el error
+       * @param {string} errorMessage - Mensaje de error
+       */
+      function showImageError(container, errorMessage) {
+        console.error("Error al cargar la imagen:", errorMessage);
+      
+        // Mostrar un placeholder con mensaje de error
+        const errorContainer = document.createElement("div");
+        errorContainer.style.backgroundColor = "#f8d7da";
+        errorContainer.style.color = "#721c24";
+        errorContainer.style.padding = "10px";
+        errorContainer.style.borderRadius = "4px";
+        errorContainer.style.textAlign = "center";
+        errorContainer.style.height = "100px";
+        errorContainer.style.display = "flex";
+        errorContainer.style.flexDirection = "column";
+        errorContainer.style.justifyContent = "center";
+      
+        // Usar SVG en lugar de emoji
+        errorContainer.innerHTML = `
+          <div style="margin-bottom: 10px;">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                      <rect x="3" y="3" width="18" height="18" rx="2" stroke="#721c24" stroke-width="2"/>
+        <path d="M9 9L15 15" stroke="#721c24" stroke-width="2"/>
+        <path d="M15 9L9 15" stroke="#721c24" stroke-width="2"/>
+      </svg>
+    </div>
+    <div>Error al cargar la imagen</div>
+    <div style="font-size: 12px; margin-top: 5px;">${errorMessage}</div>
+  `;
+
+  container.innerHTML = ""; // Limpiar cualquier contenido previo
+  container.appendChild(errorContainer);
+}
+
+/**
+ * Muestra placeholder cuando no hay imagen con SVG
+ * @param {HTMLElement} container - Contenedor donde mostrar el placeholder
+ */
+function showImagePlaceholder(container) {
+  const placeholder = document.createElement("div");
+  placeholder.style.backgroundColor = "#f0f0f0";
+  placeholder.style.color = "#666";
+  placeholder.style.padding = "10px";
+  placeholder.style.borderRadius = "4px";
+  placeholder.style.textAlign = "center";
+  placeholder.style.height = "100px";
+  placeholder.style.display = "flex";
+  placeholder.style.flexDirection = "column";
+  placeholder.style.justifyContent = "center";
+
+  // Usar SVG en lugar de emoji
+  placeholder.innerHTML = `
+    <div style="margin-bottom: 10px;">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <rect x="3" y="3" width="18" height="18" rx="2" stroke="#666666" stroke-width="2"/>
+        <circle cx="8.5" cy="8.5" r="1.5" fill="#666666"/>
+        <path d="M6 16L8 14C8.5 13.5 9.5 13.5 10 14L14 18" stroke="#666666" stroke-width="2"/>
+        <path d="M14 16L16 14C16.5 13.5 17.5 13.5 18 14L21 17" stroke="#666666" stroke-width="2"/>
+      </svg>
+    </div>
+    <div>Sin imagen</div>
+  `;
+
+  container.appendChild(placeholder);
+}
+
+/**
+ * Agrega botón para limpiar caché
+ */
+function addClearCacheButton() {
+  if (!apiConnection) {
+    console.error("apiConnection no está definido");
+    return;
+  }
+
+  const clearCacheButton = document.createElement("button");
+  clearCacheButton.textContent = "Limpiar caché";
+  clearCacheButton.className = "clear-cache-button";
+  clearCacheButton.style.marginTop = "20px";
+  clearCacheButton.style.padding = "8px 16px";
+  clearCacheButton.style.backgroundColor = "#f44336";
+  clearCacheButton.style.color = "white";
+  clearCacheButton.style.border = "none";
+  clearCacheButton.style.borderRadius = "4px";
+  clearCacheButton.style.cursor = "pointer";
+  clearCacheButton.addEventListener("click", () => {
+    apiConnection.clearCache();
+    alert("Caché limpiada correctamente");
+  });
+
+  // Agregar el botón al final de la página
+  const container = document.querySelector(".container");
+  if (container) {
+    container.appendChild(clearCacheButton);
+  }
+}
+
+// Cargar configuración guardada al iniciar
+document.addEventListener("DOMContentLoaded", async () => {
+  // Asegurarse de que apiConnection esté definido
+  if (!apiConnection) {
+    apiConnection = new ApiConnection();
+  }
+
+  // Inicializar referencias a los elementos del DOM si no están definidas
+  if (!apiUrlInput) {
+    apiUrlInput = document.getElementById("apiUrl");
+  }
+  if (!apiTokenInput) {
+    apiTokenInput = document.getElementById("apiToken");
+  }
+
+  // Verificar si los elementos del DOM existen
+  if (!apiUrlInput || !apiTokenInput) {
+    console.error("No se pudieron encontrar los elementos del DOM necesarios.");
+    return;
+  }
+
+  // Cargar configuración guardada
+  try {
+    await loadSavedConfig(apiUrlInput, apiTokenInput);
+  } catch (error) {
+    console.error("Error al cargar la configuración guardada:", error);
+  }
+
+  // Agregar botón para limpiar caché
+  try {
+    addClearCacheButton();
+  } catch (error) {
+    console.error("Error al agregar el botón para limpiar caché:", error);
+  }
+
+  // Cargar script de compartir si no está cargado
+  if (typeof initCompartir !== "function") {
+    const script = document.createElement("script");
+    script.src = "assets/js/compartir.js";
+    script.onload = function () {
+      console.log("Script de compartir cargado correctamente");
+      if (typeof initCompartir === "function") {
+        initCompartir();
+      }
+    };
+    script.onerror = function () {
+      console.error("Error al cargar el script de compartir");
+    };
+    document.head.appendChild(script);
+  }
+});

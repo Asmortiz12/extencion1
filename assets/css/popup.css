@@ -349,3 +349,45 @@ body, html {
   .auth-test-results tr:nth-child(even) {
     background-color: #f9f9f9;
   }
+
+  .cards-container {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+    gap: 16px;
+    padding: 16px;
+  }
+  
+  .card {
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    padding: 16px;
+    box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+    background-color: #fff;
+    transition: transform 0.3s ease;
+    overflow: hidden;
+  }
+  
+  .card:hover {
+    transform: translateY(-5px);
+  }
+  
+  .card img {
+    width: 100%;
+    height: auto;
+    border-radius: 4px;
+    margin-bottom: 12px;
+    object-fit: cover;
+  }
+  
+  .card h3 {
+    margin: 0 0 12px 0;
+    font-size: 18px;
+    font-weight: bold;
+    color: #333;
+  }
+  
+  .info-text {
+    margin: 16px;
+    text-align: center;
+    color: #666;
+  }
